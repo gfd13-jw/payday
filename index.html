@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>월간·주차별 근무시간 & 급여 실시간 관리</title>
+  
+  <!-- Firebase SDK (v9 호환 모드) -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
+
+  <style>
+    :root {
+      --primary: #1e3a8a;
+      --accent: #2563eb;
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --text: #0f172a;
+      --gray: #64748b;
+      --border: #e2e8f0;
+      --danger: #dc2626;
+      --warning: #d97706;
+      --night: #7c3aed;
+      --paid: #0284c7;
+      --unpaid: #e11d48;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 14px; }
+    .container { max-width: 720px; margin: 0 auto; }
+
+    /* 상단 네비게이션 헤더 */
+    .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
+    .title-group { display: flex; align-items: center; gap: 8px; }
+    .title { font-size: 19px; font-weight: 800; color: var(--primary); }
+    .sub-badge { font-size: 11px; background: #e0e7ff; color: var(--accent); padding: 3px 8px; border-radius: 6px; font-weight: 700; }
+    
+    .sync-indicator { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--gray); font-weight: 600; }
+    .sync-dot { width: 8px; height: 8px; border-radius: 50%; background: #10b981; animation: pulse 2s infinite; }
+    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+
+    /* 월별 탐색 컨트롤 바 */
+    .month-bar { background: var(--card); border-radius: 12px; padding: 10px 16px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--border); }
+    .month-nav-btn { background: #f1f5f9; border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 700; cursor: pointer; color: var(--gray); }
+    .month-nav-btn:active { background: #e2e8f0; }
+    .month-picker-box { display: flex; align-items: center; gap: 8px; }
+    .month-picker-input { font-size: 16px; font-weight: 800; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; color: var(--primary); outline: none; background: #fff; cursor: pointer; }
+
+    /* 통상시급 설정 카드 */
+    .rate-card { background: var(--card); border-radius: 12px; padding: 12px 16px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center; }
+    .rate-label { font-size: 14px; font-weight: 700; color: var(--text); }
+    .rate-input-box { display: flex; align-items: center; gap: 6px; }
+    .rate-input { width: 130px; font-size: 16px; font-weight: 800; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; text-align: right; color: var(--primary); }
+
+    /* 대시보드 요약 카드 */
+    .dashboard-card { background: linear-gradient(135deg, #1e3a8a, #2563eb); color: #fff; border-radius: 14px; padding: 16px; margin-bottom: 14px; box-shadow: 0 4px 14px rgba(30, 58, 138, 0.2); }
+    .dash-top { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.2); padding-bottom: 10px; }
+    .dash-status { font-size: 13px; font-weight: 700; opacity: 0.9; }
+    .dash-total-time { font-size: 32px; font-weight: 900; line-height: 1; }
+    .dash-warn { color: #fca5a5; font-size: 12px; font-weight: 800; margin-top: 4px; display: none; }
+    
+    .dash-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; text-align: center; }
+    .dash-item { background: rgba(255, 255, 255, 0.14); border-radius: 8px; padding: 8px 4px; }
+    .dash-label { font-size: 11px; opacity: 0.85; margin-bottom: 3px; }
+    .dash-val { font-size: 15px; font-weight: 800; }
+
+    .dash-leave-info { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; font-size: 12px; font-weight: 700; text-align: center; }
+    .dash-leave-box { background: rgba(0,0,0,0.15); border-radius: 6px; padding: 6px; }
+
+    .pay-card { background: #0f172a; color: #fff; border-radius: 10px; padding: 12px 16px; margin-top: 10px; display: flex; justify-content: space-between; align-items: center; }
+    .pay-label { font-size: 13px; opacity: 0.9; }
+    .pay-val { font-size: 22px; font-weight: 900; color: #38bdf8; }
+
+    /* 주차별 탭 */
+    .week-tabs { display: flex; gap: 6px; margin-bottom: 12px; overflow-x: auto; padding-bottom: 2px; }
+    .week-tab { flex: 1; min-width: 95px; background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 9px 6px; text-align: center; font-size: 13px; font-weight: 700; color: var(--gray); cursor: pointer; transition: all 0.15s; }
+    .week-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); box-shadow: 0 2px 6px rgba(30,58,138,0.25); }
+    .week-tab-time { font-size: 11px; opacity: 0.85; margin-top: 3px; }
+
+    /* 주차 헤더 바 */
+    .week-ctrl-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .week-ctrl-title { font-size: 15px; font-weight: 800; color: var(--primary); }
+    .ctrl-actions { display: flex; gap: 6px; }
+    .btn-action { background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 12px; font-weight: 700; color: var(--gray); cursor: pointer; }
+    .btn-action:hover { background: #f1f5f9; }
+    .btn-batch { background: #eff6ff; color: var(--accent); border: 1px solid #bfdbfe; border-radius: 6px; padding: 6px 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
+
+    /* 요일별 카드 */
+    .day-card { background: var(--card); border-radius: 12px; padding: 12px 14px; margin-bottom: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .day-card.other-month { opacity: 0.65; background: #f8fafc; border: 1px dashed #cbd5e1; }
+    .day-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .day-title-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .day-name { font-size: 15px; font-weight: 800; }
+    .day-date-tag { font-size: 12px; font-weight: 800; color: #475569; background: #f1f5f9; border: 1px solid var(--border); padding: 2px 6px; border-radius: 5px; }
+    .tag-other-month { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; font-size: 10px; padding: 2px 5px; border-radius: 4px; font-weight: 700; }
+    .tag-start { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; font-size: 11px; padding: 2px 6px; border-radius: 4px; font-weight: 800; }
+    .tag-sat { background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; font-size: 11px; padding: 2px 6px; border-radius: 4px; font-weight: 700; }
+    .tag-sun { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; font-size: 11px; padding: 2px 6px; border-radius: 4px; font-weight: 700; }
+
+    .status-select { font-size: 12px; font-weight: 700; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); outline: none; background: #fff; }
+    .status-work { color: var(--primary); border-color: #bfdbfe; background: #eff6ff; }
+    .status-paid { color: var(--paid); border-color: #bae6fd; background: #f0f9ff; }
+    .status-unpaid { color: var(--unpaid); border-color: #fecdd3; background: #fff1f2; }
+
+    .day-hours-badge { font-size: 14px; font-weight: 800; color: var(--primary); }
+
+    /* 시간 입력 행 */
+    .time-grid { display: grid; grid-template-columns: 1fr 1fr 90px; gap: 8px; align-items: center; }
+    .input-box label { display: block; font-size: 11px; color: var(--gray); font-weight: 700; margin-bottom: 3px; }
+    .time-input { width: 100%; font-size: 14px; font-weight: 700; padding: 7px; border: 1px solid var(--border); border-radius: 6px; outline: none; background: #fff; }
+    .time-input:disabled { background: #f1f5f9; color: #94a3b8; }
+
+    /* 퀵 프리셋 버튼 */
+    .preset-row { display: flex; gap: 5px; margin-top: 8px; justify-content: flex-end; }
+    .preset-btn { background: #f8fafc; border: 1px solid var(--border); border-radius: 5px; padding: 4px 8px; font-size: 11px; font-weight: 700; color: #475569; cursor: pointer; }
+
+    .breakdown-row { margin-top: 6px; font-size: 11px; color: var(--gray); display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+    .breakdown-row span { font-weight: 700; }
+    .txt-ot { color: var(--warning); }
+    .txt-night { color: var(--night); }
+
+    /* 모달 */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: none; align-items: center; justify-content: center; z-index: 100; padding: 16px; }
+    .modal { background: #fff; border-radius: 14px; width: 100%; max-width: 380px; padding: 18px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
+    .modal-title { font-size: 16px; font-weight: 800; color: var(--primary); margin-bottom: 12px; }
+    .modal-body { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .btn-confirm { background: var(--accent); color: #fff; border: none; padding: 8px 14px; border-radius: 6px; font-weight: 700; cursor: pointer; }
+    .btn-cancel { background: #e2e8f0; color: var(--text); border: none; padding: 8px 14px; border-radius: 6px; font-weight: 700; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- 상단 헤더 -->
+    <div class="top-bar">
+      <div class="title-group">
+        <span class="title">근무시간 & 급여 관리</span>
+        <span class="sub-badge">토요일 시작 주</span>
+      </div>
+      <div class="sync-indicator">
+        <span class="sync-dot"></span>
+        <span id="syncText">클라우드 동기화 중</span>
+      </div>
+    </div>
+
+    <!-- 월별(YYYY-MM) 선택 바 -->
+    <div class="month-bar">
+      <button class="month-nav-btn" onclick="changeMonth(-1)">◀ 이전 달</button>
+      <div class="month-picker-box">
+        <input type="month" id="monthPicker" class="month-picker-input" onchange="onMonthChange(this.value)">
+      </div>
+      <button class="month-nav-btn" onclick="changeMonth(1)">다음 달 ▶</button>
+    </div>
+
+    <!-- 통상시급 설정 카드 -->
+    <div class="rate-card">
+      <span class="rate-label">기준 통상시급</span>
+      <div class="rate-input-box">
+        <input type="number" id="baseRate" class="rate-input" value="19900" step="100" onchange="onRateChange(this.value)">
+        <span style="font-size: 14px; font-weight: 700;">원</span>
+      </div>
+    </div>
+
+    <!-- 집계 대시보드 -->
+    <div class="dashboard-card">
+      <div class="dash-top">
+        <div>
+          <div class="dash-status" id="dashScopeTitle">1주차 실근무 (주 52h 한도) / 당월 급여</div>
+          <div id="limitWarn" class="dash-warn">⚠️ 주 52시간 한도 초과 (날짜 무관 주간 실근로 초과)</div>
+        </div>
+        <div class="dash-total-time"><span id="weekActualHours">0</span>h</div>
+      </div>
+
+      <div class="dash-grid">
+        <div class="dash-item">
+          <div class="dash-label">당월 기본 인정</div>
+          <div class="dash-val" id="monthBasicHours">0h</div>
+        </div>
+        <div class="dash-item">
+          <div class="dash-label">당월 연장/특근(1.5x)</div>
+          <div class="dash-val txt-ot" id="monthOtHours">0h</div>
+        </div>
+        <div class="dash-item">
+          <div class="dash-label">당월 야간(0.5x)</div>
+          <div class="dash-val txt-night" id="monthNightHours">0h</div>
+        </div>
+        <div class="dash-item">
+          <div class="dash-label">당월 유급 인정</div>
+          <div class="dash-val" id="monthPayHours">0h</div>
+        </div>
+      </div>
+
+      <div class="dash-leave-info">
+        <div class="dash-leave-box">당월 유급휴가: <span id="monthPaidLeaveCount">0</span>일 (+<span id="monthPaidLeaveHours">0</span>h 급여반영)</div>
+        <div class="dash-leave-box">당월 무급휴가: <span id="monthUnpaidLeaveCount">0</span>일 (급여 제외)</div>
+      </div>
+
+      <div class="pay-card">
+        <span class="pay-label" id="payCardLabel">당월(1일~말일) 세전 총 지급액</span>
+        <span class="pay-val" id="totalPayAmount">0 원</span>
+      </div>
+    </div>
+
+    <!-- 1~5주차 네비게이션 탭 -->
+    <div class="week-tabs" id="weekTabs"></div>
+
+    <!-- 주차별 컨트롤 바 -->
+    <div class="week-ctrl-bar">
+      <div class="week-ctrl-title" id="weekCtrlTitle">1주차 상세 근무 내역</div>
+      <div class="ctrl-actions">
+        <button class="btn-action" onclick="exportCSV()">📥 CSV</button>
+        <button class="btn-action" onclick="resetCurrentWeek()">🔄 초기화</button>
+        <button class="btn-batch" onclick="openBatchModal()">⚡ 일괄 적용</button>
+      </div>
+    </div>
+
+    <!-- 요일 리스트 (토요일 ~ 금요일) -->
+    <div id="dayList"></div>
+  </div>
+
+  <!-- 주간 일괄 적용 모달 -->
+  <div class="modal-overlay" id="batchModal">
+    <div class="modal">
+      <div class="modal-title">근무패턴 일괄 적용</div>
+      <div class="modal-body">
+        <div>
+          <label style="font-size:12px; font-weight:700; color:var(--gray);">적용 범위</label>
+          <select id="batchTarget" class="time-input" style="margin-top:4px;">
+            <option value="WEEKDAYS">평일만 (월~금, 토·일 제외)</option>
+            <option value="ALL">토요일 포함 전체 (토~금)</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px; font-weight:700; color:var(--gray);">출근시간 (10분 단위)</label>
+          <input type="time" id="batchIn" step="600" class="time-input" value="09:00">
+        </div>
+        <div>
+          <label style="font-size:12px; font-weight:700; color:var(--gray);">퇴근시간 (10분 단위)</label>
+          <input type="time" id="batchOut" step="600" class="time-input" value="18:00">
+        </div>
+        <div>
+          <label style="font-size:12px; font-weight:700; color:var(--gray);">휴게시간 (분)</label>
+          <input type="number" id="batchBreak" step="10" min="0" class="time-input" value="60">
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="closeBatchModal()">취소</button>
+        <button class="btn-confirm" onclick="applyBatchTemplate()">적용하기</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 1. Firebase Firestore 연동 설정[cite: 2]
+    const firebaseConfig = {
+      apiKey: "AIzaSyDFAQhFb6hIkFiXfYYGJAaxBI5bw4gQ36U",
+      authDomain: "pile-ead40.firebaseapp.com",
+      projectId: "pile-ead40",
+      storageBucket: "pile-ead40.firebasestorage.app",
+      messagingSenderId: "179741282513",
+      appId: "1:179741282513:web:0bacd2b11e2196e0ae35f0"
+    };
+
+    if (!firebase.apps.length) {
+      firebase.initializeApp(firebaseConfig);
+    }
+    const db = firebase.firestore();
+
+    // 2. 주간 요일 메타 (토요일 시작 ~ 금요일 종료)
+    const daysMeta = [
+      { name: "토요일", isWeekend: true, isStart: true, tagClass: "tag-sat" },
+      { name: "일요일", isWeekend: true, isStart: false, tagClass: "tag-sun" },
+      { name: "월요일", isWeekend: false, isStart: false, tagClass: "" },
+      { name: "화요일", isWeekend: false, isStart: false, tagClass: "" },
+      { name: "수요일", isWeekend: false, isStart: false, tagClass: "" },
+      { name: "목요일", isWeekend: false, isStart: false, tagClass: "" },
+      { name: "금요일", isWeekend: false, isStart: false, tagClass: "" }
+    ];
+
+    const TOTAL_WEEKS = 5;
+    let currentWeekIdx = 0;
+    let selectedMonth = getCurrentMonthStr(); // YYYY-MM
+    let unsubscribeMonth = null;
+
+    function getDefaultWeekData() {
+      return daysMeta.map(() => ({
+        status: "WORK",
+        inTime: "",
+        outTime: "",
+        breakMin: 60
+      }));
+    }
+
+    let allWeeksData = Array.from({ length: TOTAL_WEEKS }, () => getDefaultWeekData());
+
+    function getCurrentMonthStr() {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    }
+
+    // 날짜 및 당월(1일~말일) 포함 여부 계산
+    function getDateInfo(monthStr, weekIndex, dayIndex) {
+      const [year, month] = monthStr.split("-").map(Number);
+      const firstDayOfMonth = new Date(year, month - 1, 1);
+      const firstDayOfWeek = firstDayOfMonth.getDay(); // 0(일)~6(토)
+
+      // 해당 월의 첫 번째 토요일 찾기
+      const daysUntilFirstSat = (6 - firstDayOfWeek + 7) % 7;
+      const firstSaturdayDate = 1 + daysUntilFirstSat;
+
+      // 주차 및 요일 인덱스에 따른 일자 산출
+      const targetDate = new Date(year, month - 1, firstSaturdayDate + (weekIndex * 7) + dayIndex);
+
+      const y = targetDate.getFullYear();
+      const m = targetDate.getMonth() + 1;
+      const d = targetDate.getDate();
+
+      const isCurrentMonth = (y === year && m === month);
+      const dateText = `${String(m).padStart(2, '0')}.${String(d).padStart(2, '0')}`;
+      const fullDateText = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+      return {
+        isCurrentMonth,
+        dateText,
+        fullDateText
+      };
+    }
+
+    // 3. Firestore 리스너 (실시간 동기화)[cite: 2]
+    function listenMonthData(monthStr) {
+      if (unsubscribeMonth) {
+        unsubscribeMonth();
+      }
+
+      document.getElementById("syncText").innerText = "클라우드 동기화 중...";
+      const docRef = db.collection("work_schedules").doc(monthStr);
+
+      unsubscribeMonth = docRef.onSnapshot((docSnap) => {
+        if (docSnap.exists) {
+          const data = docSnap.data();
+          if (data.weeks && Array.isArray(data.weeks)) {
+            allWeeksData = data.weeks;
+          } else {
+            allWeeksData = Array.from({ length: TOTAL_WEEKS }, () => getDefaultWeekData());
+          }
+          if (data.baseRate) {
+            document.getElementById("baseRate").value = data.baseRate;
+          }
+        } else {
+          allWeeksData = Array.from({ length: TOTAL_WEEKS }, () => getDefaultWeekData());
+        }
+
+        document.getElementById("syncText").innerText = "실시간 저장됨";
+        renderWeekTabs();
+        renderDays();
+        calculateAll(false);
+      }, (err) => {
+        console.error("Firestore 동기화 실패:", err);
+        document.getElementById("syncText").innerText = "오프라인 모드";
+      });
+    }
+
+    async function syncToFirestore() {
+      const baseRate = Number(document.getElementById("baseRate").value) || 0;
+      document.getElementById("syncText").innerText = "저장 중...";
+      try {
+        await db.collection("work_schedules").doc(selectedMonth).set({
+          weeks: allWeeksData,
+          baseRate: baseRate,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        document.getElementById("syncText").innerText = "실시간 저장됨";
+      } catch (e) {
+        console.error("저장 오류:", e);
+        document.getElementById("syncText").innerText = "저장 실패";
+      }
+    }
+
+    window.onMonthChange = function(val) {
+      if (val && val !== selectedMonth) {
+        selectedMonth = val;
+        listenMonthData(selectedMonth);
+      }
+    };
+
+    window.changeMonth = function(delta) {
+      const [year, month] = selectedMonth.split("-").map(Number);
+      const target = new Date(year, month - 1 + delta, 1);
+      selectedMonth = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}`;
+      document.getElementById("monthPicker").value = selectedMonth;
+      listenMonthData(selectedMonth);
+    };
+
+    window.onRateChange = function() {
+      calculateAll(true);
+    };
+
+    function switchWeek(weekIdx) {
+      currentWeekIdx = weekIdx;
+      document.getElementById("dashScopeTitle").innerText = `${currentWeekIdx + 1}주차 실근무 (주 52h 한도) / 당월 급여`;
+      document.getElementById("weekCtrlTitle").innerText = `${currentWeekIdx + 1}주차 상세 근무 내역`;
+      renderWeekTabs();
+      renderDays();
+      calculateAll(false);
+    }
+
+    function renderWeekTabs() {
+      const container = document.getElementById("weekTabs");
+      container.innerHTML = "";
+
+      for (let i = 0; i < TOTAL_WEEKS; i++) {
+        const tab = document.createElement("div");
+        tab.className = `week-tab ${i === currentWeekIdx ? "active" : ""}`;
+        tab.onclick = () => switchWeek(i);
+
+        const summary = calcWeekSummary(i);
+        const startDay = getDateInfo(selectedMonth, i, 0).dateText;
+        const endDay = getDateInfo(selectedMonth, i, 6).dateText;
+
+        tab.innerHTML = `
+          <div>${i + 1}주차</div>
+          <div style="font-size:10px; opacity:0.8; margin-top:2px;">${startDay}~${endDay}</div>
+          <div class="week-tab-time">${summary.weekActualHours}h</div>
+        `;
+        container.appendChild(tab);
+      }
+    }
+
+    function renderDays() {
+      const container = document.getElementById("dayList");
+      container.innerHTML = "";
+      const currentWeekData = allWeeksData[currentWeekIdx];
+
+      daysMeta.forEach((day, idx) => {
+        const item = currentWeekData[idx];
+        const isLeave = item.status === "PAID_LEAVE" || item.status === "UNPAID_LEAVE";
+        const dateInfo = getDateInfo(selectedMonth, currentWeekIdx, idx);
+
+        let statusClass = "status-work";
+        if (item.status === "PAID_LEAVE") statusClass = "status-paid";
+        if (item.status === "UNPAID_LEAVE") statusClass = "status-unpaid";
+
+        const card = document.createElement("div");
+        card.className = `day-card ${dateInfo.isCurrentMonth ? "" : "other-month"}`;
+        card.innerHTML = `
+          <div class="day-header">
+            <div class="day-title-group">
+              <span class="day-name">${day.name}</span>
+              <span class="day-date-tag">${dateInfo.dateText}</span>
+              ${!dateInfo.isCurrentMonth ? `<span class="tag-other-month">당월외(급여제외)</span>` : ''}
+              ${day.isStart ? `<span class="tag-start">주 시작</span>` : ''}
+              ${day.tagClass ? `<span class="${day.tagClass}">주말</span>` : ''}
+              <select class="status-select ${statusClass}" onchange="changeDayStatus(${idx}, this.value)">
+                <option value="WORK" ${item.status === "WORK" ? "selected" : ""}>정상근무</option>
+                <option value="PAID_LEAVE" ${item.status === "PAID_LEAVE" ? "selected" : ""}>유급휴가</option>
+                <option value="UNPAID_LEAVE" ${item.status === "UNPAID_LEAVE" ? "selected" : ""}>무급휴가</option>
+              </select>
+            </div>
+            <div class="day-hours-badge" id="badge_${idx}">실근무 0h</div>
+          </div>
+
+          <div class="time-grid">
+            <div class="input-box">
+              <label>출근시간(10분단위)</label>
+              <input type="time" step="600" class="time-input" value="${item.inTime}" ${isLeave ? "disabled" : ""} onchange="changeTime(${idx}, 'inTime', this.value)">
+            </div>
+            <div class="input-box">
+              <label>퇴근시간(10분단위)</label>
+              <input type="time" step="600" class="time-input" value="${item.outTime}" ${isLeave ? "disabled" : ""} onchange="changeTime(${idx}, 'outTime', this.value)">
+            </div>
+            <div class="input-box">
+              <label>휴게(분)</label>
+              <input type="number" step="10" min="0" class="time-input" value="${item.breakMin}" ${isLeave ? "disabled" : ""} onchange="changeTime(${idx}, 'breakMin', this.value)">
+            </div>
+          </div>
+
+          <div class="preset-row">
+            <button type="button" class="preset-btn" onclick="applyPreset(${idx}, '8H')">8h(기본)</button>
+            <button type="button" class="preset-btn" onclick="applyPreset(${idx}, '10H')">10h(야근)</button>
+            <button type="button" class="preset-btn" onclick="applyPreset(${idx}, 'PAID')">유급휴가</button>
+            <button type="button" class="preset-btn" onclick="applyPreset(${idx}, 'CLEAR')">초기화</button>
+          </div>
+
+          <div class="breakdown-row" id="breakdown_${idx}">
+            <span>휴게 차감: ${item.breakMin}분</span>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    // 1일 실근무 및 22:00 이후 야간 시간 산정
+    function calcDayDetails(inStr, outStr, breakMin) {
+      if (!inStr || !outStr) return { actualHours: 0, nightHours: 0, validBreakMin: 0 };
+
+      const [inH, inM] = inStr.split(":").map(Number);
+      const [outH, outM] = outStr.split(":").map(Number);
+
+      let inTotalMin = inH * 60 + inM;
+      let outTotalMin = outH * 60 + outM;
+
+      if (outTotalMin <= inTotalMin) {
+        outTotalMin += 24 * 60; // 익일 퇴근
+      }
+
+      const totalSpanMin = Math.max(0, outTotalMin - inTotalMin);
+      const deductBreakMin = Math.min(Number(breakMin) || 0, totalSpanMin);
+      
+      const netMinutes = Math.max(0, totalSpanMin - deductBreakMin);
+      const actualHours = Math.round((netMinutes / 60) * 10) / 10;
+
+      // 22:00 ~ 익일 06:00 야간 분리
+      let rawNightMinutes = 0;
+      for (let m = inTotalMin; m < outTotalMin; m++) {
+        const modM = m % (24 * 60);
+        if (modM >= 22 * 60 || modM < 6 * 60) {
+          rawNightMinutes++;
+        }
+      }
+
+      let netNightMinutes = rawNightMinutes;
+      if (totalSpanMin > 0 && deductBreakMin > 0) {
+        const ratio = rawNightMinutes / totalSpanMin;
+        netNightMinutes = Math.max(0, rawNightMinutes - (deductBreakMin * ratio));
+      }
+      const nightHours = Math.round((netNightMinutes / 60) * 10) / 10;
+
+      return { actualHours, nightHours, validBreakMin: deductBreakMin };
+    }
+
+    // 주간 요약 (주 52시간 체크용: 날짜 무관 순수 토~금 주간 실근무)
+    function calcWeekSummary(weekIdx) {
+      const weekData = allWeeksData[weekIdx];
+      let weekActualHours = 0;
+
+      daysMeta.forEach((day, idx) => {
+        const item = weekData[idx];
+        if (item.status === "WORK") {
+          const res = calcDayDetails(item.inTime, item.outTime, item.breakMin);
+          weekActualHours += res.actualHours;
+        }
+      });
+
+      weekActualHours = Math.round(weekActualHours * 10) / 10;
+      return { weekActualHours };
+    }
+
+    // 전체 5주차 중 [당월 1일 ~ 말일]에 해당하는 근무분만 합산하여 급여 계산
+    function calculateAll(needSync = true) {
+      const baseRate = Number(document.getElementById("baseRate").value) || 0;
+
+      let monthBasicHours = 0;
+      let monthOtHours = 0;
+      let monthNightHours = 0;
+      let monthPaidLeaveCount = 0;
+      let monthUnpaidLeaveCount = 0;
+      let monthPaidLeaveHours = 0;
+
+      // 주차별 주 40시간 초과 연장 계산을 위한 주별 루프
+      allWeeksData.forEach((weekData, wIdx) => {
+        let weeklyCumulativeBasic = 0;
+
+        daysMeta.forEach((day, dIdx) => {
+          const item = weekData[dIdx];
+          const dateInfo = getDateInfo(selectedMonth, wIdx, dIdx);
+
+          if (item.status === "UNPAID_LEAVE") {
+            if (dateInfo.isCurrentMonth) monthUnpaidLeaveCount++;
+            return;
+          }
+
+          if (item.status === "PAID_LEAVE") {
+            if (dateInfo.isCurrentMonth) {
+              monthPaidLeaveCount++;
+              monthPaidLeaveHours += 8;
+            }
+            return;
+          }
+
+          // 정상 근무
+          const res = calcDayDetails(item.inTime, item.outTime, item.breakMin);
+          const dayActual = res.actualHours;
+          let dayBasic = 0;
+          let dayOt = 0;
+
+          if (day.isWeekend) {
+            dayOt = dayActual; // 주말 전액 가산
+          } else {
+            const dailyLimit = Math.min(dayActual, 8);
+            const remainingWeekly = Math.max(0, 40 - weeklyCumulativeBasic);
+            dayBasic = Math.min(dailyLimit, remainingWeekly);
+            dayOt = Math.round((dayActual - dayBasic) * 10) / 10;
+            weeklyCumulativeBasic += dayBasic;
+          }
+
+          // ★ 당월 1일~말일에 포함되는 날짜만 급여 총합에 산입 ★
+          if (dateInfo.isCurrentMonth) {
+            monthBasicHours += dayBasic;
+            monthOtHours += dayOt;
+            monthNightHours += res.nightHours;
+          }
+        });
+      });
+
+      monthBasicHours = Math.round(monthBasicHours * 10) / 10;
+      monthOtHours = Math.round(monthOtHours * 10) / 10;
+      monthNightHours = Math.round(monthNightHours * 10) / 10;
+
+      // 당월 총 유급 인정시간 (기본 + 유급휴가 + 연장/특근 1.5배 + 야간 0.5배 가산)
+      const monthPayHours = Math.round((monthBasicHours + monthPaidLeaveHours + (monthOtHours * 1.5) + (monthNightHours * 0.5)) * 10) / 10;
+      const totalMonthPay = Math.round(monthPayHours * baseRate);
+
+      // 선택된 주차 요일별 UI 카드 갱신
+      const curWeekData = allWeeksData[currentWeekIdx];
+      let curWeekCumulativeBasic = 0;
+      curWeekData.forEach((dayItem, dIdx) => {
+        const badge = document.getElementById(`badge_${dIdx}`);
+        const breakdown = document.getElementById(`breakdown_${dIdx}`);
+        const dateInfo = getDateInfo(selectedMonth, currentWeekIdx, dIdx);
+
+        if (dayItem.status === "UNPAID_LEAVE") {
+          if (badge) badge.innerText = "무급휴가 (0h)";
+          if (breakdown) breakdown.innerHTML = `<span style="color:var(--unpaid);">급여 및 시간 제외</span>`;
+          return;
+        }
+
+        if (dayItem.status === "PAID_LEAVE") {
+          if (badge) badge.innerText = "유급휴가 (+8h)";
+          if (breakdown) breakdown.innerHTML = `<span style="color:var(--paid);">기본 8시간 인정 ${dateInfo.isCurrentMonth ? '' : '(당월외)'}</span>`;
+          return;
+        }
+
+        const res = calcDayDetails(dayItem.inTime, dayItem.outTime, dayItem.breakMin);
+        const dayActual = res.actualHours;
+        let dayBasic = 0;
+        let dayOt = 0;
+
+        if (daysMeta[dIdx].isWeekend) {
+          dayOt = dayActual;
+        } else {
+          const dailyLimit = Math.min(dayActual, 8);
+          const remainingWeekly = Math.max(0, 40 - curWeekCumulativeBasic);
+          dayBasic = Math.min(dailyLimit, remainingWeekly);
+          dayOt = Math.round((dayActual - dayBasic) * 10) / 10;
+          curWeekCumulativeBasic += dayBasic;
+        }
+
+        if (badge) badge.innerText = `실근무 ${dayActual}h`;
+        if (breakdown) {
+          let text = `휴게 ${res.validBreakMin}분 차감 | 기본 ${dayBasic}h`;
+          if (dayOt > 0) text += ` | <span class="txt-ot">연장/주말 ${dayOt}h</span>`;
+          if (res.nightHours > 0) text += ` | <span class="txt-night">야간(22시~) ${res.nightHours}h</span>`;
+          if (!dateInfo.isCurrentMonth) text += ` | <span style="color:#b91c1c; font-weight:800;">(당월 급여제외)</span>`;
+          breakdown.innerHTML = text;
+        }
+      });
+
+      // 대시보드 갱신
+      const curWeekSummary = calcWeekSummary(currentWeekIdx);
+      document.getElementById("weekActualHours").innerText = curWeekSummary.weekActualHours;
+      document.getElementById("monthBasicHours").innerText = `${monthBasicHours}h`;
+      document.getElementById("monthOtHours").innerText = `${monthOtHours}h`;
+      document.getElementById("monthNightHours").innerText = `${monthNightHours}h`;
+      document.getElementById("monthPayHours").innerText = `${monthPayHours}h`;
+      document.getElementById("totalPayAmount").innerText = `${totalMonthPay.toLocaleString()} 원`;
+
+      document.getElementById("monthPaidLeaveCount").innerText = monthPaidLeaveCount;
+      document.getElementById("monthPaidLeaveHours").innerText = monthPaidLeaveHours;
+      document.getElementById("monthUnpaidLeaveCount").innerText = monthUnpaidLeaveCount;
+
+      // 주 52시간 한도 초과 경고 (날짜 상관없이 토~금 해당 주의 순수 실근무시간 기준)
+      const warnBox = document.getElementById("limitWarn");
+      if (curWeekSummary.weekActualHours > 52) {
+        warnBox.style.display = "block";
+      } else {
+        warnBox.style.display = "none";
+      }
+
+      renderWeekTabs();
+
+      if (needSync) {
+        syncToFirestore();
+      }
+    }
+
+    // 변경 핸들러
+    window.changeDayStatus = function(idx, val) {
+      allWeeksData[currentWeekIdx][idx].status = val;
+      renderDays();
+      calculateAll(true);
+    };
+
+    window.changeTime = function(idx, key, val) {
+      allWeeksData[currentWeekIdx][idx][key] = val;
+      calculateAll(true);
+    };
+
+    window.applyPreset = function(idx, type) {
+      const item = allWeeksData[currentWeekIdx][idx];
+      if (type === "8H") {
+        item.status = "WORK";
+        item.inTime = "09:00";
+        item.outTime = "18:00";
+        item.breakMin = 60;
+      } else if (type === "10H") {
+        item.status = "WORK";
+        item.inTime = "09:00";
+        item.outTime = "20:00";
+        item.breakMin = 60;
+      } else if (type === "PAID") {
+        item.status = "PAID_LEAVE";
+      } else if (type === "CLEAR") {
+        item.status = "WORK";
+        item.inTime = "";
+        item.outTime = "";
+        item.breakMin = 60;
+      }
+      renderDays();
+      calculateAll(true);
+    };
+
+    window.openBatchModal = function() {
+      document.getElementById("batchModal").style.display = "flex";
+    };
+    window.closeBatchModal = function() {
+      document.getElementById("batchModal").style.display = "none";
+    };
+    window.applyBatchTemplate = function() {
+      const target = document.getElementById("batchTarget").value;
+      const inTime = document.getElementById("batchIn").value;
+      const outTime = document.getElementById("batchOut").value;
+      const breakMin = Number(document.getElementById("batchBreak").value) || 0;
+
+      daysMeta.forEach((day, idx) => {
+        if (target === "WEEKDAYS" && day.isWeekend) return;
+        allWeeksData[currentWeekIdx][idx] = {
+          status: "WORK",
+          inTime: inTime,
+          outTime: outTime,
+          breakMin: breakMin
+        };
+      });
+
+      closeBatchModal();
+      renderDays();
+      calculateAll(true);
+    };
+
+    window.resetCurrentWeek = function() {
+      if (confirm(`${currentWeekIdx + 1}주차 데이터를 초기화하시겠습니까?`)) {
+        allWeeksData[currentWeekIdx] = getDefaultWeekData();
+        renderDays();
+        calculateAll(true);
+      }
+    };
+
+    // CSV 내보내기 (당월 산입 여부 컬럼 추가)
+    window.exportCSV = function() {
+      let csvContent = "\uFEFF월,주차,날짜,요일,당월급여산입,근무구분,출근시간,퇴근시간,휴게시간(분),실근무시간(h)\n";
+      allWeeksData.forEach((week, wIdx) => {
+        week.forEach((item, dIdx) => {
+          const day = daysMeta[dIdx];
+          const dateInfo = getDateInfo(selectedMonth, wIdx, dIdx);
+          const res = (item.status === "WORK") ? calcDayDetails(item.inTime, item.outTime, item.breakMin) : { actualHours: 0 };
+          const statusText = item.status === "WORK" ? "정상근무" : (item.status === "PAID_LEAVE" ? "유급휴가" : "무급휴가");
+          const isMonthInclude = dateInfo.isCurrentMonth ? "당월포함" : "당월제외";
+          csvContent += `${selectedMonth},${wIdx + 1}주차,${dateInfo.fullDateText},${day.name},${isMonthInclude},${statusText},${item.inTime || "-"},${item.outTime || "-"},${item.breakMin},${res.actualHours}\n`;
+        });
+      });
+
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `근무집계_${selectedMonth}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    };
+
+    // 초기 실행
+    document.getElementById("monthPicker").value = selectedMonth;
+    listenMonthData(selectedMonth);
+  </script>
+</body>
+</html>
